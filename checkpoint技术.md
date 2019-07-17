@@ -1,0 +1,46 @@
+[TOC]
+
+
+
+# checkpoint技术
+
+## 简介
+
+```sql
+当事务提交的时候，先写redolog 再修改页。当发生宕机导致数据丢失的时，通过redolog来完成数据恢复。
+
+checkpoint的目的：
+a) 缩短数据库的恢复时间            ---database恢复时只需对checkpoint之后的日志进行恢复
+b) 缓冲池不够用时，将脏页刷新到磁盘  ---当缓冲池不够用时 LRU会溢出最近最少使用的页，若此为脏页，则会强行执行checkpoint
+c) redolog不可用时，刷新脏页 
+PS：innodb通过lsn（log sequence number）来标记版本
+```
+## 分类
+
+
+```SQL
+1. sharp checkpoint  ： 发生在数据库关闭时,将脏页刷新回磁盘
+
+2. fuzzy checkpoint  ： 只刷新部分脏页
+   1）master Thread checkpoint  每秒（或十秒）刷新一定比例的脏页
+   2）Flush_LRU_LIST            LRU list需要保证100个左右的空闲页可使用（若没有 释放尾端页 若为为脏页 刷新到磁盘） 
+                               mysql> show variables like 'innodb_lru_scan_depth'\G;  
+                               --通过此参数控制LRU list上可用页的数量  这个检查放在page cleaner thread当中
+   3）Async/sync flush
+      在redolog不可用时 将脏页刷新
+      解释：
+             已经写入redo的LSN 为 redo_lSN 已经刷新回磁盘的最新页的LSN 为checkpoint_lsn
+              Async_water_mark = 75%*total_redo_log_file_size
+              sync_water_mark = 90%*total_redo_log_file_size
+              1 当checkpoint_age <           Async_water_mark  不需要刷新脏页到磁盘
+              2 当checkpoint_age介于上两者之间  刷新足够的脏页到磁盘  以满足条件1
+              3 当checkpoint_age大于sync_water_mark  刷新足够的脏页到磁盘  以满足条件1
+              --可见：Async/sync Flush checkpoint 是为了保证重做日志循环使用的可用性  这部分的刷新操作放在page cleaner Thread当中
+              
+   4）Dirty page too much
+         mysql> show variables like 'innodb_max_dirty_pages_pct'\G;
+         *************************** 1. row ***************************
+         Variable_name: innodb_max_dirty_pages_pct
+                   Value: 75.000000 
+         --解释：当缓冲池中脏页的数量占据75%,强制checkpoint，刷新部分脏页
+```
