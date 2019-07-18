@@ -1,0 +1,46 @@
+[TOC]
+
+
+
+# 启动 关闭与恢复对innodb的影响
+
+## mysql实例关闭对innodb的操作:
+
+
+```sql
+参数innodb_fast_shutdown (0.1.2)控制innodb，在数据库关闭时的操作：
+a. 取0时，在mysql关闭时 innodb需要完成所有的full purge（回收undo页）和merge insert buffer，并且将所有的脏页刷新回磁盘。
+关机速度慢，但是innodb进行升级时，需要把参数调整为0，再关闭数据库
+
+b. 取1时，默认值。关机时，不需要完成上述的full purge和merge insert buffer。但是缓冲池中的部分数据脏页还是会刷新的
+
+c. 取2时，上述操作都不做，而是将日志都写入日志文件。保证事务不丢失，下次启动mysql时，会进行恢复操作。
+```
+
+## 实例打开时对INNODB的操作
+
+```SQL
+show variables like 'innodb_force_recovery'\G;
+可以设置为1~6的非0值，默认设置为0
+设置为非0值 用户可以对表进行select drop create ，但是对DML操作是不允许的。
+    
+1 (SRV_FORCE_IGNORE_CORRUPT): 忽略检查到的 corrupt 页。尽管检测到了损坏的 page 仍强制服务运行。一般设置为该值即可，然后 dump 出库表进行重建。
+
+2 (SRV_FORCE_NO_BACKGROUND): 阻止主线程的运行，如主线程需要执行 full purge 操作，会导致 crash。 阻止 master thread 和任何 purge thread 运行。若 crash 发生在 purge 环节则使用该值。
+
+3 (SRV_FORCE_NO_TRX_UNDO): 不执行事务回滚操作。
+
+4 (SRV_FORCE_NO_IBUF_MERGE): 不执行插入缓冲的合并操作。如果可能导致崩溃则不要做这些操作。不要进行统计操作。该值可能永久损坏数据文件。若使用了该值，则将来要删除和重建辅助索引。
+
+5 (SRV_FORCE_NO_UNDO_LOG_SCAN): 不查看重做日志，InnoDB 存储引擎会将未提交的事务视为已提交。此时 InnoDB 甚至把未完成的事务按照提交处理。该值可能永久性的损坏数据文件。
+
+6 (SRV_FORCE_NO_LOG_REDO): 不执行前滚的操作。恢复时不做 redo log roll-forward。使数据库页处于废止状态，继而可能引起 B 树或者其他数据库结构更多的损坏。
+
+
+
+启用此参数，针对表空间损坏，导致重启之后无法正常恢复，线程在数据页中读取不到需要的 page 和数据，数据库无法打开：
+
+[mysqld]
+innodb_force_recovery = 6
+然后重启 MySQL，立即对数据库用 mysqldump 把数据导出。完成后，去掉 innodb_force_recovery 或者设置为 0，然后重新创建数据库，把数据导入。
+```
